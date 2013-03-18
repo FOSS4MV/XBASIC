@@ -1,0 +1,396 @@
+*
+* Program Name:  XBASIC
+* Written By:    Kevin King
+* Date:          29 Dec 1998
+* Description:   This program will read an item to be BASIC compiled,
+*                precompile it for a specific system, compile the updated
+*                code, and rewrite the original code when complete.
+*
+* Copyright (c) 1998 Kevin King
+*
+* Permission is hereby granted, free of charge, to any person obtaining a
+* copy of this software and associated documentation files (the "Software"),
+* to deal in the Software without restriction, including without limitation
+* the rights to use, copy, modify, merge, publish, distribute, sublicense,
+* and/or sell copies of the Software, and to permit persons to whom the 
+* Software is furnished to do so, subject to the following conditions:
+*
+* The above copyright notice and this permission notice shall be included
+* in all copies or substantial portions of the Software.
+*
+* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS 
+* OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+* THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING 
+* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+* DEALINGS IN THE SOFTWARE.
+*
+*****************************************************************************
+* Modifications:
+*****************************************************************************
+* Date.....  Changed By.....  Description of Change..........................
+* 06 Feb 13  Kevin King       Added MIT License
+* 02/2012    Tony Gravagno    [01] Option to compile or not
+*                             [02] Comment out unused TAG var
+*                             [03] Use *~ to comment out code for other OE
+*                             [04] Remove *~ from lines prior to checking
+*                             [05] Second compile if first fails
+*                             [06] Fix ITEM.ID var to ITEM.IDS
+*                             [07] Comment out source not KEEPing
+*                             [08] Option to leave modified source to debug
+*                             [09] Show user valid options
+*                             [10] Allow for Compile verb for D3
+*                             [11] Correct Y/N on Precompile prompt to Y/END
+*                             [12] Fix compile execution to include options
+*                                  This needs to be adapted to each platform.
+* Note: Code can still use enhancements for processing the
+*       command line for various platforms.
+PROMPT ''
+*
+*****************************************************************************
+* Equate(s)
+*****************************************************************************
+*
+EQU AM TO CHAR(254)
+EQU VM TO CHAR(253)
+*
+TRUE  = (1 EQ 1)
+FALSE = NOT(TRUE)
+*
+GOSUB 1000 ;* Get the command parameters
+GOSUB 2000 ;* Do the work for all items in the list
+*
+STOP
+*
+*****************************************************************************
+1000 * Get the command parameters
+*****************************************************************************
+*
+PROCREAD TCL ELSE TCL = ''
+TCL = TRIM(TCL)
+*
+* The following section could have been written using CONVERT or CHANGE on
+* certain platforms.  However, not all platforms support these commands.
+* Secondly, on certain platforms, the PROCREAD buffer is returned with
+* attribute marks between fields; other platforms return the buffer with
+* spaces between fields. This code will ensure that the TCL input buffer
+* is delimited with attribute marks.
+*
+LOOP
+  SP = INDEX(TCL,' ',1)
+UNTIL NOT(SP) DO
+  TCL = TCL[0,SP - 1] : AM : TCL[SP + 1,32200]
+REPEAT
+*
+* Extract the options for the compiler
+*
+COMPILE.OPTS = ''
+TCL.CNT = DCOUNT(TCL,AM)
+FOR TCL.LOOP = TCL.CNT TO 1 STEP -1
+  WORD   = TCL<TCL.LOOP>
+  LEADIN = WORD[1,1]
+  IF (LEADIN EQ '(') OR (LEADIN EQ '-') THEN
+     COMPILE.OPTS = COMPILE.OPTS : ' ' : WORD
+     TCL = DELETE(TCL,TCL.LOOP,0,0)
+  END
+NEXT TCL.LOOP
+*
+FILE.NAME = TCL<2>
+*
+* Remove the command and file name, leaving the item IDs
+*
+FOR DEL.LOOP = 1 TO 2
+  TCL = DELETE(TCL,1,0,0)
+NEXT DEL.LOOP
+*
+ITEM.IDS = TCL
+*
+GOSUB 1100 ;* Open the file
+*
+IF (ITEM.IDS EQ '') THEN
+  GOSUB 1200 ;* Get an item ID or list of IDs
+END
+*
+GOSUB 1300 ;* Prompt for the OE
+*
+RETURN
+*
+*****************************************************************************
+1100 * Open the file
+*****************************************************************************
+*
+GOSUB 1110 ;* Verify the file name
+*
+LOOP
+WHILE (FILE.NAME EQ '') DO
+  PRINT 'File Name > ' :
+  INPUT FILE.NAME
+*
+  FILE.NAME = OCONV(FILE.NAME,'MCU')
+  IF (FILE.NAME EQ 'END') THEN STOP
+*
+  GOSUB 1110 ;* Verify the file name
+REPEAT
+*
+RETURN
+*
+*****************************************************************************
+1110 * Verify the file name
+*****************************************************************************
+*
+OKAY = FALSE
+IF (FILE.NAME NE '') THEN
+  OPEN '',FILE.NAME TO F.IN THEN
+     OKAY = TRUE
+  END ELSE
+     PRINT 'There is no file named "':FILE.NAME:'"'
+  END
+END
+*
+IF NOT(OKAY) THEN
+  FILE.NAME = ''
+END
+*
+RETURN
+*
+*****************************************************************************
+1200 * Get an item ID or list of IDs
+*****************************************************************************
+*
+* First, look for the list
+*
+EOF = FALSE
+LOOP
+  READNEXT ID ELSE EOF = TRUE
+UNTIL EOF DO
+  ITEM.IDS = INSERT(ITEM.IDS,-1,0,0,ID)
+REPEAT
+*
+IF (ITEM.IDS EQ '') THEN
+  LOOP
+     PRINT 'Item Name > ' :
+     INPUT ITEM.IDS
+*
+     ITEM.IDS = OCONV(ITEM.IDS,'MCU') ; * [06]
+     IF (ITEM.IDS EQ 'END') THEN STOP
+*
+     OKAY = FALSE
+     READ ITEM FROM F.IN,ITEM.IDS THEN
+        OKAY = TRUE
+     END
+  UNTIL OKAY DO
+     PRINT 'There is no item named "':ITEM.IDS:'"'
+  REPEAT
+END
+*
+RETURN
+*
+*****************************************************************************
+1300 * Prompt for the OE
+*****************************************************************************
+*
+LOOP
+  PRINT 'Operating Environment > ' :
+  INPUT OE
+*
+  OE = OCONV(OE,'MCU')
+*
+  IF (OE EQ 'END') THEN STOP
+*
+* [11] Start
+*  PRINT 'Precompile for ' : OE : '? (Y/<cr>=N) : ' :
+  PRINT 'Precompile for ' : OE : '? (Y/END) : ' :
+* [11] End
+  INPUT YORN
+*
+  YORN = OCONV(YORN,'MCU')
+*
+  IF (YORN EQ 'END') THEN STOP
+UNTIL (YORN EQ 'Y') DO
+REPEAT
+* [02]
+* TAG = '#IF ' : OE
+* [01] Start
+LOOP
+  PRINT 'Compile Y/N/END > ' :   ; * [09]
+  INPUT OBJ
+*
+  OBJ = OCONV(OBJ,'MCU')
+*
+  IF (OBJ EQ 'END') THEN STOP
+UNTIL (OBJ EQ 'Y' OR OBJ EQ 'N') DO
+REPEAT
+* [01] End
+
+* [10] Start
+CVERB = 'B'
+IF OE = 'D3' AND OBJ = 'Y' THEN
+  LOOP
+     PRINT 'Verb = Compile or Basic C/B/END > ' :
+     INPUT CVERB
+*
+     CVERB = OCONV(CVERB,'MCU')
+*
+     IF (CVERB EQ 'END') THEN STOP
+  UNTIL (CVERB EQ 'C' OR CVERB EQ 'B') DO
+  REPEAT
+END
+* [10] End
+
+* [08] Start
+LOOP
+  PRINT 'Leave source Y/N/END > ' :   ; * [09]
+  INPUT LEAVE
+*
+  LEAVE = OCONV(LEAVE,'MCU')
+*
+  IF (LEAVE EQ 'END') THEN STOP
+UNTIL (LEAVE EQ 'Y' OR LEAVE EQ 'N') DO
+REPEAT
+* [08] End
+RETURN
+*
+*****************************************************************************
+2000 * Do the work for all items in the list
+*****************************************************************************
+*
+ITEM.CNT = DCOUNT(ITEM.IDS,AM)
+FOR ITEM.LOOP = 1 TO ITEM.CNT
+  ITEM.ID = ITEM.IDS<ITEM.LOOP>
+  GOSUB 3000 ;* Process this item
+NEXT ITEM.LOOP
+*
+RETURN
+*
+*****************************************************************************
+3000 * Process this item
+*****************************************************************************
+*
+READ ITEM FROM F.IN,ITEM.ID THEN
+  GOSUB 3100 ;* We have an item
+END ELSE
+  PRINT 'Item "':ITEM.ID:'" does not exist in "':FILE.NAME:'"'
+END
+*
+RETURN
+*
+*****************************************************************************
+3100 * We have an item loaded
+*****************************************************************************
+*
+ITEM.ORIG = ITEM
+*
+GOSUB 3200 ;* Precompile the item
+GOSUB 3300 ;* Compile the item
+GOSUB 3400 ;* Write the original item back to the file
+*
+RETURN
+*
+*****************************************************************************
+3200 * Precompile the item
+*****************************************************************************
+*
+PRINT 'Precompiling ' : ITEM.ID : ' for ' : OE : '...'
+*
+ITEM.NEW = ''
+*
+KEEP = TRUE
+LINE.CNT = DCOUNT(ITEM,AM)
+FOR LINE.LOOP = 1 TO LINE.CNT
+  IF NOT(MOD(LINE.LOOP,10)) THEN
+     PRINT '.':
+  END
+*
+  KEEP.THIS  = KEEP
+  ORIG.LN    = ITEM<LINE.LOOP>
+  IF ORIG.LN[1,2] = "*~" THEN ORIG.LN = ORIG.LN[3,9999]  ; * [03]
+  TRIM.LN    = TRIM(ORIG.LN)
+  FIRST.WORD = FIELD(TRIM.LN,' ',1)
+  BEGIN CASE
+     CASE (FIRST.WORD EQ '#IF')
+        TEST.OE = FIELD(TRIM.LN,' ',2)
+*
+        LOOP
+           SP = INDEX(TEST.OE,',',1)
+        UNTIL NOT(SP) DO
+           TEST.OE = TEST.OE[0,SP-1]:VM:TEST.OE[SP+1,32200]
+        REPEAT
+*
+        LOCATE(OE,TEST.OE,1;PTR) ELSE
+           KEEP = FALSE
+        END
+*
+        KEEP.THIS = FALSE ;* We never include #IF directives
+     CASE (FIRST.WORD EQ '#END')
+        KEEP = TRUE
+        KEEP.THIS = FALSE ;* We never include #END directives
+  END CASE
+*
+  IF NOT(KEEP.THIS) OR NOT(KEEP) THEN ; * [07]
+     ORIG.LN = '*~' : ORIG.LN
+  END
+*
+  ITEM.NEW<LINE.LOOP> = ORIG.LN
+NEXT LINE.LOOP
+*
+PRINT
+*
+WRITE ITEM.ORIG ON F.IN,ITEM.ID:'.ORIG'
+WRITE ITEM.NEW  ON F.IN,ITEM.ID
+*
+RETURN
+*
+*****************************************************************************
+3300 * Compile the item
+*****************************************************************************
+*
+IF OBJ = 'Y' THEN ; * [01]
+  IF (COMPILE.OPTS NE '') THEN
+     PRINT 'Compiling ' : ITEM.ID : ' with options' : COMPILE.OPTS : ' ...'
+  END ELSE
+     PRINT 'Compiling ' : ITEM.ID : '...'
+  END
+  IF CVERB = 'B' THEN ; * [10]
+     CMD = 'BASIC ' : FILE.NAME : ' ' : ITEM.ID
+  END ELSE
+     CMD = 'COMPILE ' : FILE.NAME : ' ' : ITEM.ID
+  END
+* [12] Start
+* Warning, the following will not work with all platforms
+* Check for your platform and please send update to Kevin King
+  IF (COMPILE.OPTS NE '') THEN
+     CMD = CMD : ' (':COMPILE.OPTS
+  END
+* [12] End
+*
+* [04] Start
+*  EXECUTE CMD
+  EXECUTE CMD RETURNING ERR
+  IF ERR # 241 THEN
+     CRT "ERR=":ERR
+* Cant hurt to try again
+     EXECUTE CMD RETURNING ERR
+     IF ERR # 241 THEN
+        CRT "ERR=":ERR
+        CRT "No luck"
+     END ELSE
+        CRT "Double compile works!"
+     END
+  END
+* [04] End
+*
+END
+RETURN
+*
+*****************************************************************************
+3400 * Write the original item back to the file
+*****************************************************************************
+*
+IF LEAVE = 'N' THEN ; * [08]
+  WRITE ITEM.ORIG ON F.IN,ITEM.ID
+  DELETE F.IN,ITEM.ID:'.ORIG'
+END
+*
+RETURN
+END
